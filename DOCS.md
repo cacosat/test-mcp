@@ -1,4 +1,4 @@
-# Gorgias MCP Server — Detailed Documentation
+# Gorgias MCP Server — Documentation
 
 ## Table of Contents
 
@@ -15,7 +15,8 @@
 - [READ_ONLY Mode](#read_only-mode)
 - [Error Handling](#error-handling)
 - [Architecture](#architecture)
-- [Gorgias API Reference](#gorgias-api-reference)
+- [Gorgias API Endpoints](#gorgias-api-endpoints)
+- [Known Limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -24,14 +25,15 @@
 
 This MCP (Model Context Protocol) server acts as a bridge between Claude and the Gorgias helpdesk REST API. It exposes 12 tools that allow Claude to:
 
-- Query and filter tickets by date, channel, tags, assignee, and status
-- Read ticket field definitions (critical for custom taxonomies like Incidencias L1/L2/L3)
-- Pull CSAT / satisfaction metrics and ticket statistics (FRT, resolution time, volume)
+- List and sort tickets, filter by customer or pre-configured Gorgias Views
+- Read full ticket details including messages, attachments, and custom field values
+- Read custom field definitions (Incidencias L1/L2/L3 taxonomy, Bandeja, AI Intent)
+- Pull CSAT survey responses and performance stats (FRT, resolution time)
 - Create and update tickets, including assigning custom field values
 - Manage tags on tickets
-- Look up customer information
+- Look up customer information with Shopify integration data
 
-The server communicates with Claude via **stdio transport** — it reads JSON-RPC messages from stdin and writes responses to stdout. This is the standard MCP transport for local integrations with Claude Desktop and Claude Code.
+The server communicates via **stdio transport** — it reads JSON-RPC messages from stdin and writes responses to stdout. This is the standard MCP transport for local integrations with Claude Desktop and Claude Code.
 
 ---
 
@@ -41,14 +43,14 @@ The server authenticates with Gorgias using **HTTP Basic Auth**.
 
 | Environment Variable | Description | Example |
 |---------------------|-------------|---------|
-| `GORGIAS_DOMAIN` | Your Gorgias domain (subdomain or full URL) | `reuse.gorgias.com` or `reuse` |
-| `GORGIAS_USERNAME` | Email address associated with your Gorgias account | `admin@reuse.com` |
+| `GORGIAS_DOMAIN` | Your Gorgias domain (subdomain or full URL) | `reuse.gorgias.com` |
+| `GORGIAS_USERNAME` | Email address associated with your Gorgias API key | `admin@reuse.com` |
 | `GORGIAS_API_KEY` | REST API key from Gorgias | `abc123...` |
 
 **How to get your API key:**
 
 1. Log into your Gorgias account
-2. Go to **Settings → REST API**
+2. Go to **Settings > REST API**
 3. Create a new API key or copy an existing one
 4. The username is the email address associated with that API key
 
@@ -59,8 +61,6 @@ The `GORGIAS_DOMAIN` value is flexible:
 - `https://reuse.gorgias.com` → `https://reuse.gorgias.com/api`
 - `https://reuse.gorgias.com/` → `https://reuse.gorgias.com/api` (trailing slash stripped)
 
-The auth header is constructed as: `Authorization: Basic base64(username:apiKey)` — this is handled automatically by axios.
-
 ---
 
 ## Tool Reference
@@ -69,30 +69,29 @@ The auth header is constructed as: `Authorization: Basic base64(username:apiKey)
 
 #### `list_tickets`
 
-List and filter Gorgias tickets.
+List Gorgias tickets with pagination and sorting. Supports filtering by customer ID or pre-configured Gorgias View.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `limit` | number | No | 30 | Results per page (1-100) |
-| `page` | number | No | 1 | Page number |
-| `created_datetime__gte` | string | No | — | ISO 8601 datetime. Tickets created on or after this date. |
-| `created_datetime__lte` | string | No | — | ISO 8601 datetime. Tickets created on or before this date. |
-| `channel` | string | No | — | Filter by channel: `email`, `chat`, `phone`, `facebook`, `instagram`, etc. |
-| `tags` | string | No | — | Filter by tag name |
-| `assignee_user__id` | number | No | — | Filter by assignee user ID |
-| `status` | string | No | — | `open` or `closed` |
+| `cursor` | string | No | — | Cursor for pagination (from previous response `meta.next_cursor`) |
+| `customer_id` | number | No | — | Filter tickets by customer ID |
+| `view_id` | number | No | — | Filter using a pre-configured Gorgias View ID |
+| `order_by` | string | No | — | Sort order: `created_datetime:asc`, `created_datetime:desc`, `updated_datetime:asc`, `updated_datetime:desc` |
 
 **Gorgias API:** `GET /api/tickets`
 
-**Example prompt:** "Show me open tickets from the last 7 days assigned to user 12345"
+**Note:** Gorgias does not support ad-hoc filtering by status, channel, tags, or date range on this endpoint. To filter by these fields, create a View in the Gorgias UI and pass its `view_id`, or fetch tickets and let Claude filter client-side.
+
+**Example prompt:** "List my 5 most recent tickets sorted by creation date"
 
 ---
 
 #### `get_ticket`
 
-Get a single ticket with full details including all messages, tags, and custom field values.
+Get a single ticket with full details including all messages, attachments, tags, custom field values, and satisfaction survey data.
 
 **Parameters:**
 
@@ -102,7 +101,7 @@ Get a single ticket with full details including all messages, tags, and custom f
 
 **Gorgias API:** `GET /api/tickets/{id}`
 
-**Example prompt:** "Show me the details of ticket #98765"
+**Response includes:** message bodies (HTML + text), attachment URLs, customer profile, custom_fields (Incidencias taxonomy values), tags, assignee_team, satisfaction_survey, timestamps.
 
 ---
 
@@ -121,13 +120,13 @@ Create a new Gorgias ticket with an initial message.
 
 **Gorgias API:** `POST /api/tickets`
 
-**Note:** This tool is hidden when `READ_ONLY=true`.
+**Hidden when `READ_ONLY=true`.**
 
 ---
 
 #### `update_ticket` (write)
 
-Update an existing ticket. Use this to assign agents, change status, set custom field values (Incidencias L1/L2/L3), or replace tags.
+Update an existing ticket. Assign agents, change status, set custom field values (Incidencias L1/L2/L3), or replace tags.
 
 **Parameters:**
 
@@ -141,20 +140,18 @@ Update an existing ticket. Use this to assign agents, change status, set custom 
 
 **Gorgias API:** `PUT /api/tickets/{id}`
 
-**Custom fields example:**
-
-To set an Incidencias L1 value, first call `get_ticket_fields` to find the field ID (e.g., `42`), then:
+**Custom fields example:** To classify a ticket as "Despacho::Estado", first call `get_ticket_fields` to find the Incidencias field ID (e.g., `133864`), then:
 
 ```json
 {
-  "ticket_id": 98765,
+  "ticket_id": 90498537,
   "custom_fields": [
-    { "id": 42, "value": "Despacho::Estado" }
+    { "id": 133864, "value": "Despacho::Estado" }
   ]
 }
 ```
 
-**Note:** This tool is hidden when `READ_ONLY=true`.
+**Hidden when `READ_ONLY=true`.**
 
 ---
 
@@ -173,7 +170,7 @@ Add a message or internal note to an existing ticket.
 
 **Gorgias API:** `POST /api/tickets/{id}/messages`
 
-**Note:** Use `via: "internal-note"` for agent-only notes that customers won't see. This tool is hidden when `READ_ONLY=true`.
+Use `via: "internal-note"` for agent-only notes that customers won't see. **Hidden when `READ_ONLY=true`.**
 
 ---
 
@@ -188,7 +185,7 @@ List Gorgias customers with optional email filter.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `limit` | number | No | 30 | Results per page (1-100) |
-| `page` | number | No | 1 | Page number |
+| `cursor` | string | No | — | Cursor for pagination |
 | `email` | string | No | — | Filter by exact email address |
 
 **Gorgias API:** `GET /api/customers`
@@ -197,7 +194,7 @@ List Gorgias customers with optional email filter.
 
 #### `get_customer`
 
-Get a single customer by ID with full details.
+Get a single customer by ID with full details including Shopify integration data.
 
 **Parameters:**
 
@@ -207,29 +204,34 @@ Get a single customer by ID with full details.
 
 **Gorgias API:** `GET /api/customers/{id}`
 
+**Response includes:** communication channels, Shopify integration data (customer ID, currency, creation date), meta fields, custom_fields.
+
 ---
 
 ### Ticket Fields
 
 #### `get_ticket_fields`
 
-Get ticket field definitions, including custom dropdown fields like the Incidencias taxonomy. This is essential for discovering field IDs and allowed values before updating tickets.
+Get custom field definitions including dropdown options. Essential for discovering field IDs and allowed values before updating tickets with `update_ticket`.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `ticket_field_id` | number | No | Get a specific field by ID. Omit to list all fields. |
+| `ticket_field_id` | number | No | Get a specific field by ID. Omit to list all ticket fields. |
 
-**Gorgias API:** `GET /api/ticket-fields` or `GET /api/ticket-fields/{id}`
+**Gorgias API:** `GET /api/custom-fields?object_type=Ticket` or `GET /api/custom-fields/{id}`
 
-**Response includes:**
-- Field IDs (needed for `update_ticket` custom_fields)
-- Field names and types (text, dropdown, checkbox, etc.)
-- Dropdown options with allowed values
-- Field descriptions
+**Response includes:** field IDs, labels, types, dropdown choices with allowed values.
 
-**This endpoint is cached for 5 minutes** since field definitions rarely change.
+**Known fields in Reuse's Gorgias account:**
+- **Incidencias** (id 133864) — 53 contact reason categories (`Consulta::Disponibilidad`, `Despacho::Estado`, `Garantia::Falla::Funcional`, etc.)
+- **Bandeja** (id 133862) — 8 routing categories (Ventas, Post Venta, Cliente critico, etc.)
+- **Incidencias L1** (id 121007) — Top-level types (Garantias, Cambios, Despacho, Devolucion, Consultas, Otros)
+- **AI Intent** (id 120995) — 110+ AI-detected topic categories
+- **Managed sentiment** (id 120999) — Positive / Negative / Undefined
+
+**This endpoint is cached for 5 minutes.**
 
 ---
 
@@ -237,47 +239,56 @@ Get ticket field definitions, including custom dropdown fields like the Incidenc
 
 #### `get_satisfaction_stats`
 
-Get customer satisfaction (CSAT) statistics for a date range.
+Get individual CSAT satisfaction survey responses. Returns raw survey data that Claude can aggregate for CSAT scores by agent, country, or time period.
 
 **Parameters:**
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `datetime__gte` | string | Yes | Start of date range (ISO 8601) |
-| `datetime__lte` | string | Yes | End of date range (ISO 8601) |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `limit` | number | No | 30 | Number of survey responses to return (1-100) |
+| `cursor` | string | No | — | Cursor for pagination |
 
-**Gorgias API:** `GET /api/satisfaction`
+**Gorgias API:** `GET /api/satisfaction-surveys`
 
-**Response:** Returns individual satisfaction survey responses with scores. Claude can aggregate these to calculate CSAT percentages by agent, country, or time period.
+**Response includes per survey:** `score` (1-5, or null if unscored), `body_text` (customer feedback), `ticket_id`, `customer_id`, `sent_datetime`, `scored_datetime`.
 
-**This endpoint is cached for 5 minutes.**
-
-**Example prompt:** "What's our CSAT score for the last 30 days?"
+**Example prompt:** "Get the last 50 CSAT surveys and calculate our satisfaction rate"
 
 ---
 
 #### `get_ticket_stats`
 
-Get ticket statistics including first response time (FRT), resolution time, and volume.
+Get a performance statistic for a date range using the Gorgias Statistics API.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `datetime__gte` | string | Yes | Start of date range (ISO 8601) |
-| `datetime__lte` | string | Yes | End of date range (ISO 8601) |
-| `group_by` | string | No | Group by `agent`, `integration`, or `channel` |
+| `metric` | string | Yes | `first-response-time` or `resolution-time` |
+| `from` | string | Yes | Start of date range (ISO 8601 datetime) |
+| `to` | string | Yes | End of date range (ISO 8601 datetime) |
 
-**Gorgias API:** `GET /api/stats`
+**Gorgias API:** `POST /api/stats/{metric}`
 
-**`group_by` options:**
-- `agent` — Break down metrics per agent (useful for performance monitoring)
-- `integration` — Break down by integration/country
-- `channel` — Break down by communication channel (email, chat, phone)
+**Request body sent:**
+```json
+{
+  "filters": {
+    "period": {
+      "start_datetime": "2026-03-01T00:00:00Z",
+      "end_datetime": "2026-03-28T23:59:59Z"
+    }
+  }
+}
+```
 
-**This endpoint is cached for 5 minutes.**
+**Available metrics:**
+- `first-response-time` — Median time from customer message to first agent reply
+- `resolution-time` — Median time from first customer message to ticket closure
 
-**Example prompt:** "Show me FRT by agent for this week"
+**This endpoint is cached for 5 minutes.** The legacy stats API is scheduled for sunset on December 31, 2026.
+
+**Example prompt:** "What's our average first response time for March 2026?"
 
 ---
 
@@ -285,14 +296,14 @@ Get ticket statistics including first response time (FRT), resolution time, and 
 
 #### `list_tags`
 
-List all available Gorgias tags.
+List all available Gorgias tags with usage counts.
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `limit` | number | No | 30 | Results per page (1-100) |
-| `page` | number | No | 1 | Page number |
+| `cursor` | string | No | — | Cursor for pagination |
 
 **Gorgias API:** `GET /api/tags`
 
@@ -300,7 +311,7 @@ List all available Gorgias tags.
 
 #### `manage_tags` (write)
 
-Add or remove a tag on a specific ticket. Internally, this fetches the ticket's current tags, modifies the list, and updates the ticket.
+Add or remove a tag on a specific ticket. Internally fetches the ticket's current tags, modifies the list, and updates the ticket.
 
 **Parameters:**
 
@@ -312,46 +323,41 @@ Add or remove a tag on a specific ticket. Internally, this fetches the ticket's 
 
 **Gorgias API:** `GET /api/tickets/{id}` then `PUT /api/tickets/{id}` with updated tags array.
 
-**Note:** Tag matching is case-insensitive. Duplicate adds are ignored. This tool is hidden when `READ_ONLY=true`.
+Tag matching is case-insensitive. Duplicate adds are ignored. **Hidden when `READ_ONLY=true`.**
 
 ---
 
 ## Rate Limiting
 
-Gorgias enforces API rate limits (~2 requests/second on basic plans). When the limit is exceeded, the API returns HTTP `429 Too Many Requests`.
+Gorgias enforces API rate limits (~2 requests/second on basic plans). When exceeded, the API returns HTTP `429 Too Many Requests`.
 
 The client handles this automatically:
 
-1. On 429 response, reads the `Retry-After` header from Gorgias
+1. On 429, reads the `Retry-After` header from Gorgias
 2. If no header, applies exponential backoff: **1s → 2s → 4s**
 3. Retries up to **3 times** before throwing an error
 4. All other HTTP errors fail immediately (no retry)
 
-This ensures that bulk operations (e.g., scanning many tickets for classification) degrade gracefully instead of failing.
-
-**Implementation:** `src/gorgias-client.js` — the `request()` method's retry loop.
+**Implementation:** `src/gorgias-client.js:87-114` — the `request()` method's retry loop.
 
 ---
 
 ## Caching
 
-Responses from certain endpoints are cached in memory to reduce API calls and avoid rate limits during report generation.
+Responses from certain endpoints are cached in memory to reduce API calls.
 
 **Cached endpoints:**
 
-| Path | Cache Duration | Reason |
-|------|---------------|--------|
-| `/satisfaction` | 5 minutes | CSAT data changes infrequently |
-| `/stats` | 5 minutes | Aggregate statistics are stable short-term |
-| `/ticket-fields` | 5 minutes | Field definitions rarely change |
+| Path pattern | Cache Duration | Reason |
+|-------------|---------------|--------|
+| `/stats/*` | 5 minutes | Performance stats are stable short-term (uses POST) |
+| `/custom-fields` | 5 minutes | Field definitions rarely change |
 
-**Not cached:** Tickets, customers, tags, and messages — these change frequently and should always reflect current state.
+**Not cached:** Tickets, customers, tags, satisfaction surveys, and messages — these change frequently.
 
-**Cache key format:** `path?{JSON-serialized params}` — so the same endpoint with different query parameters is cached separately.
+**Cache key format:** `path?{params}:{data}` — different query parameters or POST bodies are cached separately.
 
-**Cache invalidation:** Entries expire automatically after 5 minutes. The `clearCache()` method on the client can force-clear all cached data if needed.
-
-**Implementation:** `src/gorgias-client.js` — the `cache` Map, `getCached()`, and `isCacheable()` methods.
+**Implementation:** `src/gorgias-client.js` — the `cache` Map, `getCached()`, `isCacheable()`, and `cacheKey()` methods.
 
 ---
 
@@ -359,14 +365,11 @@ Responses from certain endpoints are cached in memory to reduce API calls and av
 
 Set `READ_ONLY=true` in your environment to disable all write operations.
 
-**When enabled:**
-- 8 read tools are registered: `list_tickets`, `get_ticket`, `list_customers`, `get_customer`, `get_ticket_fields`, `get_satisfaction_stats`, `get_ticket_stats`, `list_tags`
-- 4 write tools are **not registered** (invisible to Claude): `create_ticket`, `update_ticket`, `add_message_to_ticket`, `manage_tags`
+**When enabled (8 tools):** `list_tickets`, `get_ticket`, `list_customers`, `get_customer`, `get_ticket_fields`, `get_satisfaction_stats`, `get_ticket_stats`, `list_tags`
 
-**When disabled (default):**
-- All 12 tools are registered
+**When disabled (12 tools):** All of the above plus `create_ticket`, `update_ticket`, `add_message_to_ticket`, `manage_tags`
 
-**Recommendation:** Start with `READ_ONLY=true` in production until you're confident in the server's behavior. Switch to `false` when ready to enable ticket classification and tag management.
+Write tools are not registered at all when read-only — Claude cannot see or call them.
 
 **Implementation:** `src/tools/tickets.js` and `src/tools/tags.js` check `options.readOnly` and skip registering write tools when true.
 
@@ -374,18 +377,16 @@ Set `READ_ONLY=true` in your environment to disable all write operations.
 
 ## Error Handling
 
-Errors are handled at two levels:
+### HTTP Client Level (`gorgias-client.js`)
 
-### 1. HTTP Client Level (`gorgias-client.js`)
+- **429 Too Many Requests:** Retried with exponential backoff (see [Rate Limiting](#rate-limiting))
+- **401 / 403:** `"Authentication failed (status). Check GORGIAS_DOMAIN, GORGIAS_USERNAME, and GORGIAS_API_KEY."`
+- **Other API errors:** `"Gorgias API error {status}: {response body}"`
+- **Network errors:** `"Gorgias request failed: {message}"`
 
-- **429 Too Many Requests**: Retried with exponential backoff (see [Rate Limiting](#rate-limiting))
-- **401 / 403 Authentication errors**: Throws a clear message: `"Authentication failed (status). Check GORGIAS_DOMAIN, GORGIAS_USERNAME, and GORGIAS_API_KEY."`
-- **Other API errors**: Throws `"Gorgias API error {status}: {response body}"`
-- **Network errors**: Throws `"Gorgias request failed: {message}"`
+### Tool Level
 
-### 2. Tool Level (each tool handler)
-
-Every tool handler is wrapped in try/catch. On error, it returns:
+Every tool handler wraps its body in try/catch and returns:
 
 ```json
 {
@@ -396,14 +397,9 @@ Every tool handler is wrapped in try/catch. On error, it returns:
 
 This tells Claude the tool call failed without crashing the MCP connection.
 
-### 3. Startup Validation
+### Startup Validation
 
-On startup, `src/index.js` checks that all required environment variables are present. If any are missing, it prints a clear error and exits with code 1:
-
-```
-Missing required environment variables: GORGIAS_DOMAIN, GORGIAS_USERNAME, GORGIAS_API_KEY
-Copy .env.example to .env and fill in your Gorgias credentials.
-```
+On startup, `src/index.js` checks that all required environment variables are present. If any are missing, it prints a clear error and exits with code 1.
 
 ---
 
@@ -413,15 +409,15 @@ Copy .env.example to .env and fill in your Gorgias credentials.
 src/
   index.js              Entry point
   │                     - Loads .env via dotenv
-  │                     - Validates required env vars
+  │                     - Validates GORGIAS_DOMAIN, GORGIAS_USERNAME, GORGIAS_API_KEY
   │                     - Creates GorgiasClient and MCP server
-  │                     - Starts stdio transport
+  │                     - Starts StdioServerTransport
   │
   gorgias-client.js     HTTP client (GorgiasClient class)
   │                     - Axios instance with Basic Auth
   │                     - get(), post(), put() convenience methods
-  │                     - request() core with retry/backoff on 429
-  │                     - In-memory cache with 5-min TTL
+  │                     - request() with retry/backoff on 429
+  │                     - In-memory cache with 5-min TTL for stats + custom-fields
   │
   server.js             MCP server factory (createServer function)
   │                     - Creates McpServer instance
@@ -431,8 +427,8 @@ src/
   tools/
     tickets.js          5 tools — list, get, create, update, add message
     customers.js        2 tools — list, get
-    fields.js           1 tool  — get ticket fields
-    stats.js            2 tools — satisfaction stats, ticket stats
+    fields.js           1 tool  — get custom field definitions
+    stats.js            2 tools — satisfaction surveys, ticket stats
     tags.js             2 tools — list tags, manage tags
 ```
 
@@ -447,9 +443,7 @@ src/
 
 ---
 
-## Gorgias API Reference
-
-This server consumes the following Gorgias REST API endpoints:
+## Gorgias API Endpoints
 
 | Endpoint | Method | Tool(s) |
 |----------|--------|---------|
@@ -460,13 +454,24 @@ This server consumes the following Gorgias REST API endpoints:
 | `/api/tickets/{id}/messages` | POST | `add_message_to_ticket` |
 | `/api/customers` | GET | `list_customers` |
 | `/api/customers/{id}` | GET | `get_customer` |
-| `/api/ticket-fields` | GET | `get_ticket_fields` |
-| `/api/ticket-fields/{id}` | GET | `get_ticket_fields` (single field) |
-| `/api/satisfaction` | GET | `get_satisfaction_stats` |
-| `/api/stats` | GET | `get_ticket_stats` |
+| `/api/custom-fields` | GET | `get_ticket_fields` (list all, with `?object_type=Ticket`) |
+| `/api/custom-fields/{id}` | GET | `get_ticket_fields` (single field) |
+| `/api/satisfaction-surveys` | GET | `get_satisfaction_stats` |
+| `/api/stats/{metric}` | POST | `get_ticket_stats` |
 | `/api/tags` | GET | `list_tags` |
 
-Full Gorgias API documentation: https://developers.gorgias.com/reference
+Full Gorgias API docs: https://developers.gorgias.com/reference
+
+---
+
+## Known Limitations
+
+- **No ad-hoc ticket filtering:** The `GET /api/tickets` endpoint does not support filtering by status, channel, tags, or date range. Use `view_id` (pre-configured Gorgias Views) or fetch and filter client-side.
+- **Limited stat metrics:** Only `first-response-time` and `resolution-time` are confirmed working. Other metrics (ticket volume, messages sent) may use different names on the legacy stats API.
+- **Legacy stats API sunset:** The `POST /api/stats/{name}` endpoint is scheduled for deprecation on December 31, 2026. A newer `POST /api/reporting/stats` endpoint exists but is not yet implemented in this server.
+- **Satisfaction aggregation:** The satisfaction tool returns individual survey responses, not pre-aggregated CSAT scores. Claude aggregates them client-side.
+- **Pagination:** All list endpoints use cursor-based pagination, not page numbers. Pass the `cursor` value from `meta.next_cursor` in the previous response to get the next page.
+- **Timestamps:** All Gorgias timestamps are in UTC. Convert to local timezone when building reports (e.g., Chile = UTC-3).
 
 ---
 
@@ -474,7 +479,7 @@ Full Gorgias API documentation: https://developers.gorgias.com/reference
 
 ### "Missing required environment variables"
 
-You haven't created a `.env` file or it's missing values. Run:
+You haven't created a `.env` file or it's missing values:
 ```bash
 cp .env.example .env
 ```
@@ -482,22 +487,31 @@ Then fill in your Gorgias credentials.
 
 ### "Authentication failed (401)"
 
-- Verify your `GORGIAS_USERNAME` is the email associated with the API key (not just any account email)
-- Verify your `GORGIAS_API_KEY` is correct and hasn't been revoked
-- Verify your `GORGIAS_DOMAIN` matches your actual Gorgias subdomain
+- Verify `GORGIAS_USERNAME` is the email associated with the API key (not just any account email)
+- Verify `GORGIAS_API_KEY` is correct and hasn't been revoked
+- Verify `GORGIAS_DOMAIN` matches your actual Gorgias subdomain
 
 ### "Gorgias API error 429"
 
-You're hitting rate limits. The server retries automatically up to 3 times. If you still see this, you may be making too many concurrent requests. The Gorgias basic plan allows ~2 requests/second.
+Rate limited. The server retries automatically up to 3 times with backoff. If you still see this, reduce concurrent requests. The basic Gorgias plan allows ~2 requests/second.
 
 ### Server starts but Claude doesn't see the tools
 
-- Make sure the `"command"` and `"args"` paths in your client config are absolute paths
-- Restart Claude Desktop / Claude Code after changing the MCP config
-- Check that `node src/index.js` runs without errors when you test it manually
+- Ensure the path in `"args"` is an **absolute path** to `src/index.js`
+- On Windows, use double backslashes: `"C:\\Users\\you\\test-mcp\\src\\index.js"`
+- Restart Claude Desktop fully (quit from system tray, not just close window)
+- Test manually first: `node src/index.js` should show "Missing required environment variables"
+
+### "Cannot find module" error
+
+The repo wasn't cloned or `npm install` wasn't run:
+```bash
+cd /path/to/test-mcp
+npm install
+```
 
 ### Tools return empty results
 
-- Check your date range filters — Gorgias uses ISO 8601 format (e.g., `2025-01-01T00:00:00Z`)
-- Verify the Gorgias account has data in the queried range
-- Some endpoints (like `/api/stats`) may require a higher-tier Gorgias plan
+- All list endpoints return newest-first by default
+- Verify the Gorgias account has data
+- Some endpoints (stats) may require a higher-tier Gorgias plan

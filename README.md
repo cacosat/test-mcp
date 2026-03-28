@@ -6,23 +6,23 @@ MCP server that connects Claude to your [Gorgias](https://www.gorgias.com/) help
 
 | Tool | Description | Type |
 |------|-------------|------|
-| `list_tickets` | List and filter tickets by date range, channel, tags, assignee, status | Read |
+| `list_tickets` | List tickets with pagination, sorting, and customer/view filtering | Read |
 | `get_ticket` | Get a single ticket with messages, tags, and custom fields | Read |
 | `create_ticket` | Create a new ticket | Write |
 | `update_ticket` | Update status, assignee, custom fields (Incidencias L1/L2/L3), tags | Write |
 | `add_message_to_ticket` | Add a reply or internal note to a ticket | Write |
 | `list_customers` | List customers with optional email filter | Read |
 | `get_customer` | Get a single customer by ID | Read |
-| `get_ticket_fields` | Get ticket field definitions (Incidencias taxonomy dropdowns) | Read |
-| `get_satisfaction_stats` | Get CSAT / satisfaction stats for a date range | Read |
-| `get_ticket_stats` | Get FRT, resolution time, and volume stats | Read |
+| `get_ticket_fields` | Get custom field definitions (Incidencias taxonomy dropdowns) | Read |
+| `get_satisfaction_stats` | Get individual CSAT survey responses | Read |
+| `get_ticket_stats` | Get first response time or resolution time for a date range | Read |
 | `list_tags` | List all available tags | Read |
 | `manage_tags` | Add or remove a tag on a ticket | Write |
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) v18+
-- Gorgias API credentials (Settings → REST API in your Gorgias account)
+- Gorgias API credentials (Settings > REST API in your Gorgias account)
 
 ## Setup
 
@@ -56,7 +56,9 @@ This opens a web UI where you can call any tool and see the response. Try `list_
 
 ### Claude Desktop
 
-Add to `claude_desktop_config.json` (Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`):
+Add to `claude_desktop_config.json`:
+- **Mac:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -98,12 +100,12 @@ Add to `.claude/settings.json` (project-level or `~/.claude/settings.json` globa
 
 ## READ_ONLY Mode
 
-Set `READ_ONLY=true` in your env to disable all write operations. In this mode, only 8 read tools are registered — Claude cannot create, update, or modify any data. Recommended for initial deployment until you're comfortable with the write tools.
+Set `READ_ONLY=true` to disable all write operations. Only 8 read tools are registered — Claude cannot create, update, or modify any data. Recommended for initial deployment.
 
 ## Rate Limiting & Caching
 
-- **Rate limiting**: On HTTP 429 from Gorgias, retries up to 3 times with exponential backoff (1s, 2s, 4s). Respects `Retry-After` header when present.
-- **Caching**: Responses from `/satisfaction`, `/stats`, and `/ticket-fields` are cached in memory for 5 minutes to reduce API calls during report generation.
+- **Rate limiting:** On HTTP 429 from Gorgias, retries up to 3 times with exponential backoff (1s, 2s, 4s). Respects `Retry-After` header.
+- **Caching:** Responses from `/stats/*` and `/custom-fields` are cached in memory for 5 minutes to reduce API calls during report generation.
 
 ## Architecture
 
@@ -115,7 +117,9 @@ src/
   tools/
     tickets.js          list, get, create, update, add message (5 tools)
     customers.js        list, get (2 tools)
-    fields.js           get ticket fields (1 tool)
-    stats.js            satisfaction, ticket stats (2 tools)
+    fields.js           get custom fields (1 tool)
+    stats.js            satisfaction surveys, ticket stats (2 tools)
     tags.js             list, manage (2 tools)
 ```
+
+See [DOCS.md](DOCS.md) for full tool reference with parameters, API mappings, and troubleshooting.
