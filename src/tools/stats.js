@@ -25,25 +25,25 @@ export function registerStatsTools(server, client) {
   // ── get_ticket_stats (read) ──
   server.tool(
     'get_ticket_stats',
-    'Get a Gorgias ticket statistic for a date range. Available metrics: first-response-time, resolution-time, messages-sent, messages-received.',
+    'Get a Gorgias ticket statistic for a date range. Available metrics: first-response-time, resolution-time.',
     {
       metric: z
         .enum([
           'first-response-time',
           'resolution-time',
-          'messages-sent',
-          'messages-received',
         ])
         .describe('The statistic metric to retrieve'),
-      datetime_from: z.string().describe('Start of date range (ISO datetime, required)'),
-      datetime_to: z.string().describe('End of date range (ISO datetime, required)'),
+      from: z.string().describe('Start of date range (ISO datetime, required)'),
+      to: z.string().describe('End of date range (ISO datetime, required)'),
     },
     async (params) => {
       try {
         const data = await client.post(`/stats/${params.metric}`, {
           filters: {
-            datetime_from: params.datetime_from,
-            datetime_to: params.datetime_to,
+            period: {
+              from: params.from,
+              to: params.to,
+            },
           },
         });
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
