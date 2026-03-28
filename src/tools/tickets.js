@@ -11,13 +11,9 @@ export function registerTicketTools(server, client, options) {
       customer_id: z.number().optional().describe('Filter tickets by customer ID'),
       view_id: z.number().optional().describe('Filter tickets using a pre-configured Gorgias View ID'),
       order_by: z
-        .enum(['created_datetime', 'updated_datetime'])
+        .enum(['created_datetime:asc', 'created_datetime:desc', 'updated_datetime:asc', 'updated_datetime:desc'])
         .optional()
-        .describe('Sort by field'),
-      order_dir: z
-        .enum(['asc', 'desc'])
-        .optional()
-        .describe('Sort direction'),
+        .describe('Sort order (e.g. created_datetime:desc)'),
     },
     async (params) => {
       try {
@@ -26,7 +22,6 @@ export function registerTicketTools(server, client, options) {
         if (params.customer_id) query.customer_id = params.customer_id;
         if (params.view_id) query.view_id = params.view_id;
         if (params.order_by) query.order_by = params.order_by;
-        if (params.order_dir) query.order_dir = params.order_dir;
 
         const data = await client.get('/tickets', query);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };

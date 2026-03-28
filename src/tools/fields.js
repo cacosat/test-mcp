@@ -16,7 +16,8 @@ export function registerFieldTools(server, client) {
         const path = params.ticket_field_id
           ? `/custom-fields/${params.ticket_field_id}`
           : '/custom-fields';
-        const data = await client.get(path);
+        const query = params.ticket_field_id ? undefined : { object_type: 'Ticket' };
+        const data = await client.get(path, query);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
         return { content: [{ type: 'text', text: error.message }], isError: true };

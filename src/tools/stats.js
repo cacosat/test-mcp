@@ -2,19 +2,19 @@ import { z } from 'zod';
 
 export function registerStatsTools(server, client) {
   // ── get_satisfaction_stats (read) ──
+  // Uses the satisfaction surveys list endpoint since POST /api/stats/satisfaction doesn't exist
   server.tool(
     'get_satisfaction_stats',
-    'Get Gorgias CSAT / satisfaction statistics for a date range',
+    'Get Gorgias satisfaction survey responses. Returns individual CSAT survey results that can be aggregated for scores.',
     {
-      datetime_from: z.string().describe('Start of date range (ISO datetime, required)'),
-      datetime_to: z.string().describe('End of date range (ISO datetime, required)'),
+      limit: z.number().min(1).max(100).default(30).describe('Number of survey responses to return'),
+      cursor: z.string().optional().describe('Cursor for pagination'),
     },
     async (params) => {
       try {
-        const data = await client.post('/stats/satisfaction', {
-          datetime_from: params.datetime_from,
-          datetime_to: params.datetime_to,
-        });
+        const query = { limit: params.limit };
+        if (params.cursor) query.cursor = params.cursor;
+        const data = await client.get('/satisfaction-surveys', query);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
         return { content: [{ type: 'text', text: error.message }], isError: true };
@@ -25,12 +25,10 @@ export function registerStatsTools(server, client) {
   // ── get_ticket_stats (read) ──
   server.tool(
     'get_ticket_stats',
-    'Get a Gorgias ticket statistic for a date range. Metrics: tickets-created, tickets-closed, first-response-time, resolution-time, messages-sent, messages-received.',
+    'Get a Gorgias ticket statistic for a date range. Available metrics: first-response-time, resolution-time, messages-sent, messages-received.',
     {
       metric: z
         .enum([
-          'tickets-created',
-          'tickets-closed',
           'first-response-time',
           'resolution-time',
           'messages-sent',
@@ -43,8 +41,10 @@ export function registerStatsTools(server, client) {
     async (params) => {
       try {
         const data = await client.post(`/stats/${params.metric}`, {
-          datetime_from: params.datetime_from,
-          datetime_to: params.datetime_to,
+          filters: {
+            datetime_from: params.datetime_from,
+            datetime_to: params.datetime_to,
+          },
         });
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
