@@ -41,8 +41,8 @@ export function registerStatsTools(server, client) {
         const data = await client.post(`/stats/${params.metric}`, {
           filters: {
             period: {
-              from: params.from,
-              to: params.to,
+              start_datetime: params.from,
+              end_datetime: params.to,
             },
           },
         });
