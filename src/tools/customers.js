@@ -7,12 +7,13 @@ export function registerCustomerTools(server, client) {
     'List Gorgias customers with optional email filter',
     {
       limit: z.number().min(1).max(100).default(30).describe('Number of customers to return'),
-      page: z.number().min(1).default(1).describe('Page number for pagination'),
+      cursor: z.string().optional().describe('Cursor for pagination (from previous response meta.next_cursor)'),
       email: z.string().email().optional().describe('Filter by exact email address'),
     },
     async (params) => {
       try {
-        const query = { limit: params.limit, page: params.page };
+        const query = { limit: params.limit };
+        if (params.cursor) query.cursor = params.cursor;
         if (params.email) query.email = params.email;
 
         const data = await client.get('/customers', query);

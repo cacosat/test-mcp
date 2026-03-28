@@ -7,11 +7,13 @@ export function registerTagTools(server, client, options) {
     'List all available Gorgias tags',
     {
       limit: z.number().min(1).max(100).default(30).describe('Number of tags to return'),
-      page: z.number().min(1).default(1).describe('Page number for pagination'),
+      cursor: z.string().optional().describe('Cursor for pagination (from previous response meta.next_cursor)'),
     },
     async (params) => {
       try {
-        const data = await client.get('/tags', { limit: params.limit, page: params.page });
+        const query = { limit: params.limit };
+        if (params.cursor) query.cursor = params.cursor;
+        const data = await client.get('/tags', query);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
         return { content: [{ type: 'text', text: error.message }], isError: true };

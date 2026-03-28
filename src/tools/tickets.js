@@ -7,7 +7,7 @@ export function registerTicketTools(server, client, options) {
     'List and filter Gorgias tickets by date range, channel, tags, assignee, and status',
     {
       limit: z.number().min(1).max(100).default(30).describe('Number of tickets to return'),
-      page: z.number().min(1).default(1).describe('Page number for pagination'),
+      cursor: z.string().optional().describe('Cursor for pagination (from previous response meta.next_cursor)'),
       created_datetime__gte: z
         .string()
         .optional()
@@ -29,7 +29,8 @@ export function registerTicketTools(server, client, options) {
     },
     async (params) => {
       try {
-        const query = { limit: params.limit, page: params.page };
+        const query = { limit: params.limit };
+        if (params.cursor) query.cursor = params.cursor;
         if (params.created_datetime__gte) query.created_datetime__gte = params.created_datetime__gte;
         if (params.created_datetime__lte) query.created_datetime__lte = params.created_datetime__lte;
         if (params.channel) query.channel = params.channel;
