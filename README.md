@@ -123,3 +123,49 @@ src/
 ```
 
 See [DOCS.md](DOCS.md) for full tool reference with parameters, API mappings, and troubleshooting.
+
+## Production Deployment
+
+### Step 1: Validate with READ_ONLY
+
+Run with `READ_ONLY=true` and test all 8 read tools against your live Gorgias data. Confirm `list_tickets`, `get_ticket_fields`, `get_ticket_stats`, and `get_satisfaction_stats` return correct results. This is the current state — no changes needed if you've already tested.
+
+### Step 2: Enable Write Tools
+
+Once confident, set `READ_ONLY=false` and restart Claude Desktop. Test write tools on non-critical tickets first:
+
+1. `manage_tags` — safest write op. Add a test tag, then remove it.
+2. `update_ticket` — try setting a custom field (Incidencias) on a test ticket.
+3. `add_message_to_ticket` — add an internal note (invisible to customer).
+4. `create_ticket` — create a test ticket and close it immediately.
+
+### Step 3: Create Gorgias Views for Filtering
+
+Since `list_tickets` doesn't support ad-hoc filtering by status/channel/tags, create Views in Gorgias to cover your common queries:
+
+- **Open tickets this week** — filter: status=open, created in last 7 days
+- **Unclassified tickets** — filter: Incidencias field is empty
+- **Escalated from Vambe** — filter: tag contains `api` or `reuse`
+- **By country** — one View per country/integration (Chile, Mexico, Peru)
+
+Note each View's ID (visible in the URL when viewing it in Gorgias) and pass it to `list_tickets` via `view_id`.
+
+### Step 4: Secure Credentials
+
+For team or production use:
+
+- **Never commit `.env`** — it's already in `.gitignore`
+- **Rotate API keys** — create a dedicated Gorgias API key for the MCP server, separate from personal keys
+- **Restrict permissions** — if Gorgias supports scoped API keys, use read-only keys when write access isn't needed
+- **Secrets manager** — for shared/deployed environments, load credentials from a secrets manager (AWS Secrets Manager, 1Password CLI, etc.) instead of a `.env` file
+
+### Step 5: Migrate Stats API (Before Dec 2026)
+
+The `POST /api/stats/{metric}` endpoint is legacy and will be **sunset on December 31, 2026**. Before that date, migrate `get_ticket_stats` to the new `POST /api/reporting/stats` endpoint. See [Gorgias API docs](https://developers.gorgias.com/reference/post_api-reporting-stats) for the new format.
+
+### Possible Next Steps
+
+- **Shopify MCP server** — add a separate MCP server for Shopify order data, letting Claude cross-reference tickets with orders
+- **Prompt templates** — create system prompts for recurring workflows: weekly CX report, ticket classifier, CSAT monitor, anomaly detector
+- **Scheduled reports** — use Claude Code's `/schedule` command to run weekly CX reports automatically
+- **SSE/HTTP transport** — switch from stdio to HTTP transport if deploying the server remotely for multi-user access
