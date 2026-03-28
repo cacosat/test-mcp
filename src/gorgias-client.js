@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_RETRIES = 3;
-const CACHEABLE_PATHS = ['/satisfaction', '/stats', '/ticket-fields'];
+const CACHEABLE_PATHS = ['/stats/', '/custom-fields'];
 
 export class GorgiasClient {
   constructor({ domain, username, apiKey }) {
@@ -39,10 +39,10 @@ export class GorgiasClient {
   }
 
   /**
-   * Get a cache key from method + path + params.
+   * Get a cache key from method + path + params/data.
    */
-  cacheKey(path, params) {
-    return `${path}?${JSON.stringify(params || {})}`;
+  cacheKey(path, params, data) {
+    return `${path}?${JSON.stringify(params || {})}:${JSON.stringify(data || {})}`;
   }
 
   /**
@@ -76,9 +76,9 @@ export class GorgiasClient {
    * Core request method with retry on 429 and optional caching.
    */
   async request(method, path, params, data) {
-    // Check cache for GET requests on cacheable paths
-    if (method === 'GET' && this.isCacheable(path)) {
-      const key = this.cacheKey(path, params);
+    // Check cache for cacheable paths (stats use POST, custom-fields use GET)
+    if (this.isCacheable(path)) {
+      const key = this.cacheKey(path, params, data);
       const cached = this.getCached(key);
       if (cached !== undefined) return cached;
     }
@@ -96,8 +96,8 @@ export class GorgiasClient {
         const result = response.data;
 
         // Cache if applicable
-        if (method === 'GET' && this.isCacheable(path)) {
-          const key = this.cacheKey(path, params);
+        if (this.isCacheable(path)) {
+          const key = this.cacheKey(path, params, data);
           this.cache.set(key, { data: result, ts: Date.now() });
         }
 

@@ -14,8 +14,8 @@ export function registerFieldTools(server, client) {
     async (params) => {
       try {
         const path = params.ticket_field_id
-          ? `/ticket-fields/${params.ticket_field_id}`
-          : '/ticket-fields';
+          ? `/custom-fields/${params.ticket_field_id}`
+          : '/custom-fields';
         const data = await client.get(path);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {

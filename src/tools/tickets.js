@@ -4,39 +4,29 @@ export function registerTicketTools(server, client, options) {
   // ── list_tickets (read) ──
   server.tool(
     'list_tickets',
-    'List and filter Gorgias tickets by date range, channel, tags, assignee, and status',
+    'List Gorgias tickets. Supports pagination, sorting, and filtering by customer or view. Note: Gorgias does not support ad-hoc filtering by status/channel/tags on this endpoint — use view_id to apply pre-configured filters, or fetch and filter client-side.',
     {
       limit: z.number().min(1).max(100).default(30).describe('Number of tickets to return'),
       cursor: z.string().optional().describe('Cursor for pagination (from previous response meta.next_cursor)'),
-      created_datetime__gte: z
-        .string()
+      customer_id: z.number().optional().describe('Filter tickets by customer ID'),
+      view_id: z.number().optional().describe('Filter tickets using a pre-configured Gorgias View ID'),
+      order_by: z
+        .enum(['created_datetime', 'updated_datetime'])
         .optional()
-        .describe('Filter tickets created on or after this ISO datetime'),
-      created_datetime__lte: z
-        .string()
+        .describe('Sort by field'),
+      order_dir: z
+        .enum(['asc', 'desc'])
         .optional()
-        .describe('Filter tickets created on or before this ISO datetime'),
-      channel: z
-        .string()
-        .optional()
-        .describe('Filter by channel (email, chat, phone, facebook, instagram, etc.)'),
-      tags: z.string().optional().describe('Filter by tag name'),
-      assignee_user__id: z.number().optional().describe('Filter by assignee user ID'),
-      status: z
-        .enum(['open', 'closed'])
-        .optional()
-        .describe('Filter by ticket status'),
+        .describe('Sort direction'),
     },
     async (params) => {
       try {
         const query = { limit: params.limit };
         if (params.cursor) query.cursor = params.cursor;
-        if (params.created_datetime__gte) query.created_datetime__gte = params.created_datetime__gte;
-        if (params.created_datetime__lte) query.created_datetime__lte = params.created_datetime__lte;
-        if (params.channel) query.channel = params.channel;
-        if (params.tags) query.tags = params.tags;
-        if (params.assignee_user__id) query.assignee_user__id = params.assignee_user__id;
-        if (params.status) query.status = params.status;
+        if (params.customer_id) query.customer_id = params.customer_id;
+        if (params.view_id) query.view_id = params.view_id;
+        if (params.order_by) query.order_by = params.order_by;
+        if (params.order_dir) query.order_dir = params.order_dir;
 
         const data = await client.get('/tickets', query);
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
