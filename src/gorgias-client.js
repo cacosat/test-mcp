@@ -1,5 +1,3 @@
-import axios from 'axios';
-
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_RETRIES = 3;
 const CACHEABLE_PATHS = ['/stats/', '/custom-fields'];
@@ -13,21 +11,12 @@ export class GorgiasClient {
     }
 
     // Normalize domain to base URL
-    const baseURL = domain.startsWith('https://')
+    const base = domain.startsWith('https://')
       ? domain.replace(/\/+$/, '')
       : `https://${domain}`;
 
-    this.api = axios.create({
-      baseURL: `${baseURL}/api`,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      auth: {
-        username,
-        password: apiKey,
-      },
-    });
-
+    this.baseURL = `${base}/api`;
+    this.authHeader = `Basic ${btoa(`${username}:${apiKey}`)}`;
     this.cache = new Map();
   }
 
@@ -39,7 +28,7 @@ export class GorgiasClient {
   }
 
   /**
-   * Get a cache key from method + path + params/data.
+   * Get a cache key from path + params/data.
    */
   cacheKey(path, params, data) {
     return `${path}?${JSON.stringify(params || {})}:${JSON.stringify(data || {})}`;
@@ -73,10 +62,25 @@ export class GorgiasClient {
   }
 
   /**
+   * Build a full URL with query params for GET requests.
+   */
+  buildURL(path, params) {
+    const url = new URL(`${this.baseURL}${path}`);
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value));
+        }
+      }
+    }
+    return url.toString();
+  }
+
+  /**
    * Core request method with retry on 429 and optional caching.
    */
   async request(method, path, params, data) {
-    // Check cache for cacheable paths (stats use POST, custom-fields use GET)
+    // Check cache for cacheable paths
     if (this.isCacheable(path)) {
       const key = this.cacheKey(path, params, data);
       const cached = this.getCached(key);
@@ -86,14 +90,41 @@ export class GorgiasClient {
     let lastError;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await this.api.request({
+        const url = method === 'GET' ? this.buildURL(path, params) : this.buildURL(path);
+        const options = {
           method,
-          url: path,
-          params: method === 'GET' ? params : undefined,
-          data: method !== 'GET' ? data : undefined,
-        });
+          headers: {
+            'Authorization': this.authHeader,
+            'Content-Type': 'application/json',
+          },
+        };
 
-        const result = response.data;
+        if (method !== 'GET' && data !== undefined) {
+          options.body = JSON.stringify(data);
+        }
+
+        const response = await fetch(url, options);
+
+        // Handle rate limiting
+        if (response.status === 429 && attempt < MAX_RETRIES) {
+          const retryAfter = parseInt(response.headers.get('retry-after'), 10);
+          const waitMs = retryAfter ? retryAfter * 1000 : Math.pow(2, attempt) * 1000;
+          await this.sleep(waitMs);
+          continue;
+        }
+
+        // Handle errors (fetch doesn't throw on non-2xx)
+        if (!response.ok) {
+          const body = await response.text();
+          if (response.status === 401 || response.status === 403) {
+            throw new Error(
+              `Authentication failed (${response.status}). Check GORGIAS_DOMAIN, GORGIAS_USERNAME, and GORGIAS_API_KEY.`
+            );
+          }
+          throw new Error(`Gorgias API error ${response.status}: ${body}`);
+        }
+
+        const result = await response.json();
 
         // Cache if applicable
         if (this.isCacheable(path)) {
@@ -105,27 +136,11 @@ export class GorgiasClient {
       } catch (error) {
         lastError = error;
 
-        // Only retry on 429 (rate limit)
-        if (error.response?.status === 429 && attempt < MAX_RETRIES) {
-          const retryAfter = parseInt(error.response.headers['retry-after'], 10);
-          const waitMs = retryAfter ? retryAfter * 1000 : Math.pow(2, attempt) * 1000;
-          await this.sleep(waitMs);
-          continue;
+        // Only retry on 429 (already handled above via continue)
+        // For all other errors, throw immediately
+        if (!error.message?.includes('429')) {
+          throw error;
         }
-
-        // Format error message
-        if (error.response) {
-          const { status, data: body } = error.response;
-          if (status === 401 || status === 403) {
-            throw new Error(
-              `Authentication failed (${status}). Check GORGIAS_DOMAIN, GORGIAS_USERNAME, and GORGIAS_API_KEY.`
-            );
-          }
-          throw new Error(
-            `Gorgias API error ${status}: ${typeof body === 'string' ? body : JSON.stringify(body)}`
-          );
-        }
-        throw new Error(`Gorgias request failed: ${error.message}`);
       }
     }
 
