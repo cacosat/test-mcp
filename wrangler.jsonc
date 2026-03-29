@@ -1,5 +1,5 @@
 {
-  "name": "gorgias-mcp",
+  "name": "test-mcp",
   "main": "src/worker.js",
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -14,7 +14,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_classes": ["GorgiasMCP"]
+      "new_sqlite_classes": ["GorgiasMCP"]
     }
   ]
 }
