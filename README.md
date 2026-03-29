@@ -159,13 +159,74 @@ For team or production use:
 - **Restrict permissions** — if Gorgias supports scoped API keys, use read-only keys when write access isn't needed
 - **Secrets manager** — for shared/deployed environments, load credentials from a secrets manager (AWS Secrets Manager, 1Password CLI, etc.) instead of a `.env` file
 
-### Step 5: Migrate Stats API (Before Dec 2026)
+### Step 5: Deploy to Cloudflare Workers (Remote Access)
+
+Deploy the server to Cloudflare Workers so your team can connect without local setup. The server uses **Streamable HTTP** transport (MCP spec 2025-03-26).
+
+**Prerequisites:** [Cloudflare account](https://dash.cloudflare.com/sign-up) + [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) authenticated (`npx wrangler login`).
+
+**Set secrets:**
+
+```bash
+npx wrangler secret put GORGIAS_DOMAIN
+npx wrangler secret put GORGIAS_USERNAME
+npx wrangler secret put GORGIAS_API_KEY
+npx wrangler secret put READ_ONLY
+```
+
+Each command will prompt you to enter the value interactively (secrets are never stored in code).
+
+**Deploy:**
+
+```bash
+npm run deploy
+```
+
+Your server will be live at `https://gorgias-mcp.<your-account>.workers.dev/mcp`.
+
+**Connect from Claude Code:**
+
+```bash
+claude mcp add gorgias --transport streamable-http https://gorgias-mcp.<your-account>.workers.dev/mcp
+```
+
+**Local Worker development:**
+
+```bash
+cp .dev.vars.example .dev.vars
+# Fill in your credentials in .dev.vars
+npm run dev:worker
+```
+
+**Known limitations (Phase 1 — authless):**
+- No authentication on the Worker endpoint — anyone with the URL can call it. Suitable for internal testing only.
+- All users share a single Gorgias API key. Gorgias rate limits (~2 req/s on basic plans) apply to the key, not per user. A busy team could hit limits.
+- Durable Objects are billed separately from Workers free tier (~$0.15/million requests). For a small team this is essentially free.
+
+### Step 6: Claude Enterprise — Share with Your Organization
+
+For Claude Enterprise/Team accounts, admins can make the MCP server available to all workspace members:
+
+1. Go to **Organization Settings > Connectors > Add custom connector**
+2. Enter the Worker URL: `https://gorgias-mcp.<your-account>.workers.dev/mcp`
+3. For Phase 1 (authless), leave OAuth fields empty
+4. Team members enable the connector per-conversation via the **+** button > **Connectors** toggle
+
+**For production (OAuth):** The claude.ai web connector UI requires OAuth 2.1 — bare bearer tokens are not supported. To add OAuth:
+
+1. Use Cloudflare's OAuth template as reference: `cloudflare/ai/demos/remote-mcp-github-oauth`
+2. Add an OAuth provider (GitHub, Google, or custom via Auth0/Stytch/WorkOS)
+3. Configure the OAuth client ID/secret in the Claude Enterprise connector settings
+
+For **Claude Code CLI** users, the authless version works directly — no OAuth needed.
+
+### Step 7: Migrate Stats API (Before Dec 2026)
 
 The `POST /api/stats/{metric}` endpoint is legacy and will be **sunset on December 31, 2026**. Before that date, migrate `get_ticket_stats` to the new `POST /api/reporting/stats` endpoint. See [Gorgias API docs](https://developers.gorgias.com/reference/post_api-reporting-stats) for the new format.
 
 ### Possible Next Steps
 
+- **Add OAuth** — secure the Worker endpoint for production use with your Claude Enterprise organization
 - **Shopify MCP server** — add a separate MCP server for Shopify order data, letting Claude cross-reference tickets with orders
 - **Prompt templates** — create system prompts for recurring workflows: weekly CX report, ticket classifier, CSAT monitor, anomaly detector
 - **Scheduled reports** — use Claude Code's `/schedule` command to run weekly CX reports automatically
-- **SSE/HTTP transport** — switch from stdio to HTTP transport if deploying the server remotely for multi-user access
