@@ -1,0 +1,19 @@
+{
+  "name": "gorgias-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Gorgias helpdesk — Reuse CX",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "dev:worker": "npx wrangler dev",
+    "deploy": "npx wrangler deploy"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "agents": "^0.8.7",
+    "dotenv": "^16.4.0",
+    "zod": "^4.3.6"
+  }
+}
